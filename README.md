@@ -35,7 +35,7 @@ Once installed and activated:
 
 ## Support
 
-TODO: For support, please [create an issue](link-to-your-plugin-issue-page) on our GitHub repository.
+TODO: For support, please [create an issue](https://github.com/hacker12/DirectoryPageManager/issues) on our GitHub repository.
 
 ## Contributions
 
