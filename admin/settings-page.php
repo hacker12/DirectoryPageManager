@@ -37,9 +37,24 @@ if (!defined('ABSPATH')) {
                     Define custom folder icons in JSON format. Define the name of the directory and associate the class to be used.</p>
                     <p>Example: <pre>
 {
-"Archive":"fas fa-box-archive", 
-"Export":"fas fa-up-right-from-square", 
+"Archive":"fas fa-box-archive",
+"Export":"fas fa-up-right-from-square",
 "Import":"fas fa-file-import"
+}</pre>
+            </p>
+                </td>
+            </tr>
+            <tr valign="top">
+                <th scope="row">Exclusion list (JSON format)</th>
+                <td>
+                    <textarea name="directory_mapper_exclusion" rows="5" cols="50"><?php echo stripcslashes(get_option('directory_mapper_exclusion')); ?></textarea>
+                    <p class="description">
+                    Define exclusion list in JSON format. Define the name of the directory, file, or regex to be excluded from the generation.</p>
+                    <p>Example: <pre>
+{
+"directories":["hidden"],
+"files":["thumbs.db", "desktop.ini"],
+"regex":["*.json", "*.php"]
 }</pre>
             </p>
                 </td>

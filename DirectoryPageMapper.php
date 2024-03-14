@@ -2,7 +2,7 @@
 /*
 Plugin Name: Directory Page Mapper
 Description: Manage documentation organized in directories and create hierarchical WordPress pages accordingly.
-Version: 2.0
+Version: 2.1
 Author: Morgan ATTIAS
 Text Domain: directory-page-mapper
 */
@@ -22,6 +22,7 @@ class DirectoryPageManager {
         add_option('directory_mapper_font_awesome_url', 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css');
         add_option('directory_mapper_custom_folder_icons', '{}');
         add_option('directory_mapper_disable_breadcrumbs', '0');
+        add_option('directory_mapper_exclusion', '{}');
     }
 
     public function deactivate() {
@@ -31,15 +32,16 @@ class DirectoryPageManager {
         delete_option('directory_mapper_font_awesome_url');
         delete_option('directory_mapper_custom_folder_icons');
         delete_option('directory_mapper_disable_breadcrumbs');
+        delete_option('directory_mapper_exclusion');
     }
 
     public function addAdminMenu() {
         add_menu_page(
-            'Directory Pape Mapper', 
-            'Directory Mapper', 
+            'Directory Pape Mapper',
+            'Directory Mapper',
             'read', // This means any user can access it (change to manage_options if you want to restrict it to admins only)
-            'directory-mapper', 
-            [$this, 'settingsPage'], 
+            'directory-mapper',
+            [$this, 'settingsPage'],
             'dashicons-media-text'
         );
     }
@@ -50,6 +52,7 @@ class DirectoryPageManager {
         register_setting('directory_mapper_options_group', 'directory_mapper_font_awesome_url');
         register_setting('directory_mapper_options_group', 'directory_mapper_custom_folder_icons');
         register_setting('directory_mapper_options_group', 'directory_mapper_disable_breadcrumbs');
+        register_setting('directory_mapper_options_group', 'directory_mapper_exclusion');
     }
 
     public function settingsPage() {
@@ -78,11 +81,23 @@ class DirectoryPageManager {
                 error_log('JSON is invalid');
             }
 
-            // Trigger documentation regeneration  
+            // check if the JSON is valid and if it is then save it
+            $jsonString = stripslashes($_POST['directory_mapper_exclusion']);
+
+            if (json_decode($jsonString) !== null) {
+                update_option('directory_mapper_exclusion', $_POST['directory_mapper_exclusion']);
+            } elseif ($jsonString === '') {
+                update_option('directory_mapper_exclusion', '{}');
+            } else {
+                echo '<div class="error"><p>Exclusion list is invalid and was ignored.</p></div>';
+                error_log('JSON is invalid');
+            }
+
+            // Trigger documentation regeneration
             $this->createDocumentationPages();
             echo '<div class="updated"><p>Pages updated and settings saved.</p></div>';
         }
-        
+
         // Check if the 'Regenerate Documentation Only' button was submitted
         if (isset($_POST['regenerate']) && check_admin_referer('update_directory_mapper_settings')) {
 
@@ -106,10 +121,19 @@ class DirectoryPageManager {
             $this->deleteDocumentationPages();
             echo '<div class="updated"><p>Pages deleted.</p></div>';
         }
-    
+
        include plugin_dir_path(__FILE__) . 'admin/settings-page.php';
     }
-    
+
+    // Get the data from the exclusion list
+    public function getExclusions() {
+        $exclusions = json_decode(stripslashes(get_option('directory_mapper_exclusion')), true);
+        $exclusions['directories'] = is_array($exclusions['directories']) ? $exclusions['directories'] : [];
+        $exclusions['files'] = is_array($exclusions['files']) ? $exclusions['files'] : [];
+        $exclusions['regex'] = is_array($exclusions['regex']) ? $exclusions['regex'] : [];
+        return $exclusions;
+    }
+
 
     public function createDocumentationPages() {
         $root_directory = get_option('directory_mapper_root_directory');
@@ -132,15 +156,34 @@ class DirectoryPageManager {
             // Check if page already exists
             $existing_page_id = $this->get_page_by_directory_name($page_title, $parent_id);
 
+            // Get directory exclusion lists
+            $exclusions = $this->getexclusions();
+            $exclude_dir = isset($exclusions['directories']) ? in_array($dir_name, $exclusions['directories']) : false;
+            // check if the regex exclusion matches the directory name
+            if (isset($exclusions['regex'])) {
+                foreach ($exclusions['regex'] as $regex) {
+                    if (preg_match($regex, $dir_name)) {
+                        $exclude_dir = true;
+                        break;
+                    }
+                }
+            }
+
             // Delete Page if directory is empty and setting is enabled
-            if ($skip_empty && !count(glob("$directory/*")) && $existing_page_id !== 0)
+            if (($skip_empty && !count(glob("$directory/*")) || $exclude_dir) && $existing_page_id !== 0)
             {
-                error_log('Deleting page for directory: ' . $dir_name . ' as it is empty');
                 wp_delete_post($existing_page_id, true);
                 continue;
-            } 
+            }
             // Skip directory if it's empty and setting is enabled
-            if ($skip_empty && count(glob("$directory/*")) === 0) continue;
+            if ($skip_empty && count(glob("$directory/*")) === 0) {
+                continue;
+            }
+
+            // Skip directory if it's in the exclusion list
+            if ($exclude_dir) {
+                continue;
+            }
 
             // Create new page if not exists
             if (!$existing_page_id) {
@@ -189,7 +232,7 @@ class DirectoryPageManager {
             if ($existing_page_id !== 0)
             {
                 wp_delete_post($existing_page_id, true);
-            } 
+            }
 
             // Recursive call to create pages for subdirectories
             $this->delete_pages_recursive($directory);
@@ -239,9 +282,44 @@ class DirectoryPageManager {
 
         if (file_exists($path) && is_dir($path)) {
             $entries = array_diff(scandir($path), ['.', '..']);
+
+            // Get directory exclusion lists
+            $exclusions = $this->getexclusions();
+            $exclude_dir = isset($exclusions['directories']) ? in_array($dir_name, $exclusions['directories']) : false;
+            // check if the regex exclusion matches the directory name
+            if (isset($exclusions['regex'])) {
+                foreach ($exclusions['regex'] as $regex) {
+                    if (preg_match('/'.$regex.'/', $dir_name)) {
+                        $exclude_dir = true;
+                        break;
+                    }
+                }
+            }
+            // Skip directory if it's in the exclusion list
+            if ($exclude_dir) {
+                return;
+            }
+
             $output .= "<div class='file-entries'>";
             foreach ($entries as $entry) {
                 $entry_path = $path . '/' . $entry;
+                // skip the entry if it's in the exclusion list
+                if (in_array($entry, $exclusions['files'])) continue;
+
+                // skip the entry if it matches the regex exclusion
+                if (isset($exclusions['regex'])) {
+                    foreach ($exclusions['regex'] as $regex) {
+                        if(!isset($entry)) {
+                            continue;
+                        }
+                        if (preg_match('/'.$regex.'/', $entry)) {
+                            unset($entry);
+                            continue;
+                        }
+                    }
+                }
+
+                if(!isset($entry)) { continue; }
                 $is_dir = is_dir($entry_path);
                 $title = $this->titleize_filename($entry);
                 $file_ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
@@ -254,6 +332,16 @@ class DirectoryPageManager {
                 }
 
                 if ($is_dir) {
+                    // Continue to the next entry if the directory is in the exclusion list
+                    if (in_array($entry, $exclusions['directories'])) continue;
+                    // Continue to the next entry if the directory matches the regex exclusion
+                    if (isset($exclusions['regex'])) {
+                        foreach ($exclusions['regex'] as $regex) {
+                            if (preg_match($regex, $entry)) {
+                                continue;
+                            }
+                        }
+                    }
                     // Link to the page representing the directory
                     $title = $entry;
                     $page_link = $this->get_page_link_by_path($title);
@@ -282,14 +370,14 @@ class DirectoryPageManager {
                     }
                     #$output .= '<div>'.print_r(getPDFInfo($entry_path), true).'</div>';
                     $output .= '</div>';
-                }  
+                }
             }
         }
         $output .= '</div><br stylr="clear:all;" />';
         return $output;
     }
 
-    
+
     // Utilties for PDF metadata extraction
     private function getPDFInfo($filename) {
         $pdfInfo = [
