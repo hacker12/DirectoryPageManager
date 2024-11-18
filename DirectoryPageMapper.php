@@ -315,7 +315,7 @@ class DirectoryPageManager {
                     }
 
                     // Generate link to the page representing the directory
-                    $page_link = $this->get_page_link_by_path($entry, $path);
+                    $page_link = $this->get_page_link_by_path($entry_path);
 
                     // If skip empty is enabled and page_link is false, skip the directory
                     if (get_option('directory_mapper_skip_empty') === '1' && !$page_link) {
@@ -425,23 +425,58 @@ class DirectoryPageManager {
     }
 
     // Utility function to get page link by path
-    private function get_page_link_by_path($title, $current_path = '') {
-        // Get the page ID by directory name and parent
-        $parent_id = null;
-        if ($current_path) {
-            $parent_dir = dirname($current_path);
-            $parent_title = $this->titleize_directory(basename($parent_dir));
-            $parent_id = $this->get_page_by_directory_name($parent_title);
+    private function get_page_link_by_path($full_path) {
+        // Normalize the full path
+        $full_path = realpath($full_path);
+
+        // Get the root directory
+        $root_directory = realpath(get_option('directory_mapper_root_directory'));
+
+        // Get the relative path from root
+        $relative_path = trim(str_replace($root_directory, '', $full_path), DIRECTORY_SEPARATOR);
+
+        if ($relative_path === '') {
+            // This is the root directory
+            $args = [
+                'post_type'   => 'page',
+                'post_status' => 'publish',
+                'meta_key'    => 'directory_path',
+                'meta_value'  => $root_directory,
+                'numberposts' => 1,
+            ];
+            $pages = get_posts($args);
+            return $pages ? get_permalink($pages[0]->ID) : false;
         }
-        $args = [
-            'post_type'   => 'page',
-            'post_status' => 'publish',
-            'title'       => $this->titleize_directory($title),
-            'numberposts' => 1,
-            'post_parent' => $parent_id,
-        ];
-        $pages = get_posts($args);
-        return $pages ? get_permalink($pages[0]->ID) : false;
+
+        // Generate the array of directory names
+        $path_parts = explode(DIRECTORY_SEPARATOR, $relative_path);
+
+        // Start from the top-level pages
+        $parent_id = 0;
+
+        foreach ($path_parts as $part) {
+            $page_title = $this->titleize_directory($part);
+
+            $args = [
+                'post_type'   => 'page',
+                'post_status' => 'publish',
+                'title'       => $page_title,
+                'numberposts' => 1,
+                'post_parent' => $parent_id,
+            ];
+
+            $pages = get_posts($args);
+
+            if ($pages) {
+                $parent_id = $pages[0]->ID;
+            } else {
+                // Page not found
+                return false;
+            }
+        }
+
+        // Return the permalink of the last page found
+        return get_permalink($parent_id);
     }
 
     // Utility function to generate breadcrumbs
@@ -452,12 +487,14 @@ class DirectoryPageManager {
         $directories = explode(DIRECTORY_SEPARATOR, trim($base_directory, DIRECTORY_SEPARATOR));
         $current_path = $root_path;
 
-        $breadcrumbs .= '<a href="' . esc_url(get_permalink()) . '">' . __('Home', 'directory-page-mapper') . '</a>';
+        // Start with the root page
+        $root_page_link = $this->get_page_link_by_path($root_path);
+        $breadcrumbs .= '<a href="' . esc_url($root_page_link) . '">' . __('Home', 'directory-page-mapper') . '</a>';
 
         foreach ($directories as $directory) {
             $current_path .= DIRECTORY_SEPARATOR . $directory;
             $title = $this->titleize_directory($directory);
-            $page_link = $this->get_page_link_by_path($title, $current_path);
+            $page_link = $this->get_page_link_by_path($current_path);
             if ($page_link) {
                 $breadcrumbs .= ' / <a href="' . esc_url($page_link) . '">' . esc_html($title) . '</a>';
             } else {
