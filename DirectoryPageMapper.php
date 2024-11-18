@@ -190,11 +190,11 @@ class DirectoryPageManager {
         $dir_name = basename($dir_path);
         $page_title = $this->titleize_directory($dir_name);
 
-        // Check if directory is in exclusion list
-        $exclude_dir = in_array($dir_name, $exclusions['directories']);
+        // Check if directory is in exclusion list (case-insensitive)
+        $exclude_dir = in_array(strtolower($dir_name), array_map('strtolower', $exclusions['directories']));
 
         // Check if the regex exclusion matches the directory name
-        if (isset($exclusions['regex'])) {
+        if (!empty($exclusions['regex'])) {
             foreach ($exclusions['regex'] as $regex) {
                 if (@preg_match($regex, $dir_name)) {
                     $exclude_dir = true;
@@ -212,7 +212,7 @@ class DirectoryPageManager {
         $is_empty = empty($directories) && empty($files);
 
         // Check if page already exists
-        $existing_page_id = $this->get_page_by_directory_name($page_title, $parent_id);
+        $existing_page_id = $this->get_page_by_directory_path($dir_path);
 
         // Delete Page if directory is empty and setting is enabled
         if ($skip_empty && $is_empty && $existing_page_id !== false) {
@@ -225,14 +225,11 @@ class DirectoryPageManager {
             return;
         }
 
-        // Generate static content for the page
-        $page_content = $this->generate_static_content($dir_path);
-
         // Create new page if not exists
         if (!$existing_page_id) {
             $page_id = wp_insert_post([
                 'post_title'   => $page_title,
-                'post_content' => $page_content,
+                'post_content' => '', // We'll generate content later
                 'post_type'    => 'page',
                 'post_status'  => 'publish',
                 'post_parent'  => $parent_id,
@@ -243,18 +240,22 @@ class DirectoryPageManager {
                 return;
             }
         } else {
-            // Update existing page content
-            wp_update_post([
-                'ID'           => $existing_page_id,
-                'post_content' => $page_content,
-            ]);
             $page_id = $existing_page_id;
         }
 
-        // Recursive call to create pages for subdirectories
+        // **First, recursively create pages for subdirectories**
         foreach ($directories as $directory) {
             $this->create_pages_recursive($directory, $page_id, $skip_empty);
         }
+
+        // **Now, generate static content for the current page**
+        $page_content = $this->generate_static_content($dir_path);
+
+        // **Update the page with the generated content**
+        wp_update_post([
+            'ID'           => $page_id,
+            'post_content' => $page_content,
+        ]);
     }
 
     // Generate static content for the page
