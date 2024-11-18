@@ -286,13 +286,13 @@ class DirectoryPageManager {
             $output .= "<div class='file-entries'>";
             foreach ($entries as $entry) {
                 $entry_path = $path . DIRECTORY_SEPARATOR . $entry;
-                // Skip the entry if it's in the exclusion list
-                if (in_array($entry, $exclusions['files'])) {
+                // Skip the entry if it's in the exclusion list (case-insensitive)
+                if (in_array(strtolower($entry), array_map('strtolower', $exclusions['files']))) {
                     continue;
                 }
 
                 // Skip the entry if it matches the regex exclusion
-                if (isset($exclusions['regex'])) {
+                if (!empty($exclusions['regex'])) {
                     foreach ($exclusions['regex'] as $regex) {
                         if (@preg_match($regex, $entry)) {
                             continue 2; // Skip to next entry
@@ -307,12 +307,12 @@ class DirectoryPageManager {
                 if ($is_dir) {
                     $icon_class = isset($custom_icons[$entry]) ? $custom_icons[$entry] : 'fas fa-folder';
 
-                    // Skip directory if it's in the exclusion list
-                    if (in_array($entry, $exclusions['directories'])) {
+                    // Skip directory if it's in the exclusion list (case-insensitive)
+                    if (in_array(strtolower($entry), array_map('strtolower', $exclusions['directories']))) {
                         continue;
                     }
                     // Check regex exclusion for directories
-                    if (isset($exclusions['regex'])) {
+                    if (!empty($exclusions['regex'])) {
                         foreach ($exclusions['regex'] as $regex) {
                             if (@preg_match($regex, $entry)) {
                                 continue 2; // Skip to next entry
@@ -470,111 +470,35 @@ class DirectoryPageManager {
     }
 
     // Utility function to generate breadcrumbs
-    private function generate_static_content($path) {
-        // Enqueue necessary scripts and styles for the content
-        $this->enqueueScripts();
+    private function generate_breadcrumbs($path) {
+        $root_path = realpath(get_option('directory_mapper_root_directory'));
+        $breadcrumbs = '<div class="breadcrumbs">';
+        $current_path = $root_path;
 
-        $custom_icons_json = stripslashes(get_option('directory_mapper_custom_folder_icons', '{}')); // Default to empty JSON object
-        $custom_icons = json_decode($custom_icons_json, true);
+        // Start with the root page
+        $root_page_link = $this->get_page_link_by_path($root_path);
+        $breadcrumbs .= '<a href="' . esc_url($root_page_link) . '">' . __('Home', 'directory-page-mapper') . '</a>';
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            $custom_icons = [];
-        }
+        // Get the relative path from root
+        $relative_path = trim(str_replace($root_path, '', realpath($path)), DIRECTORY_SEPARATOR);
 
-        $output = '<div class="directory-listing">';
-        $root_directory = get_option('directory_mapper_root_directory');
-
-        // If breadcrumbs are not disabled, generate breadcrumb links
-        if (get_option('directory_mapper_disable_breadcrumbs') !== '1') {
-            $output .= $this->generate_breadcrumbs($path);
-        }
-
-        if (file_exists($path) && is_dir($path)) {
-            $entries = array_diff(scandir($path), ['.', '..']);
-
-            // Get directory exclusion lists
-            $exclusions = $this->getExclusions();
-
-            $output .= "<div class='file-entries'>";
-            foreach ($entries as $entry) {
-                $entry_path = $path . DIRECTORY_SEPARATOR . $entry;
-                // Skip the entry if it's in the exclusion list (case-insensitive)
-                if (in_array(strtolower($entry), array_map('strtolower', $exclusions['files']))) {
-                    continue;
-                }
-
-                // Skip the entry if it matches the regex exclusion
-                if (!empty($exclusions['regex'])) {
-                    foreach ($exclusions['regex'] as $regex) {
-                        if (@preg_match($regex, $entry)) {
-                            continue 2; // Skip to next entry
-                        }
-                    }
-                }
-
-                $is_dir = is_dir($entry_path);
-                $title = $this->titleize_filename($entry);
-                $file_ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
-
-                if ($is_dir) {
-                    $icon_class = isset($custom_icons[$entry]) ? $custom_icons[$entry] : 'fas fa-folder';
-
-                    // Skip directory if it's in the exclusion list (case-insensitive)
-                    if (in_array(strtolower($entry), array_map('strtolower', $exclusions['directories']))) {
-                        continue;
-                    }
-                    // Check regex exclusion for directories
-                    if (!empty($exclusions['regex'])) {
-                        foreach ($exclusions['regex'] as $regex) {
-                            if (@preg_match($regex, $entry)) {
-                                continue 2; // Skip to next entry
-                            }
-                        }
-                    }
-
-                    // Generate link to the page representing the directory
-                    $page_link = $this->get_page_link_by_path($entry_path);
-
-                    // If skip empty is enabled and page_link is false, skip the directory
-                    if (get_option('directory_mapper_skip_empty') === '1' && !$page_link) {
-                        continue;
-                    }
-
-                    $output .= '<div class="file-entry">';
-                    $output .= '<div class="directory-icon"><i class="' . esc_attr($icon_class) . ' fa-fw"></i></div>';
-                    $output .= $page_link ? '<a href="' . esc_url($page_link) . '">' . esc_html($entry) . '</a>' : esc_html($entry);
-                    $output .= '</div>';
+        if ($relative_path !== '') {
+            $path_parts = explode(DIRECTORY_SEPARATOR, $relative_path);
+            foreach ($path_parts as $part) {
+                $current_path .= DIRECTORY_SEPARATOR . $part;
+                $page_link = $this->get_page_link_by_path($current_path);
+                $title = $this->titleize_directory($part);
+                if ($page_link) {
+                    $breadcrumbs .= ' / <a href="' . esc_url($page_link) . '">' . esc_html($title) . '</a>';
                 } else {
-                    $icon_class = $this->get_file_icon_class($file_ext);
-
-                    // Link to the document
-                    $output .= '<div class="file-entry">';
-                    $output .= '<div class="file-icon"><i class="' . esc_attr($icon_class) . ' fa-fw"></i></div>';
-                    $file_url = str_replace(ABSPATH, site_url('/'), $entry_path);
-                    $output .= '<a href="' . esc_url($file_url) . '" class="file-download">' . esc_html($title) . '</a>';
-                    $output .= '<div class="file-name">' . esc_html($entry) . ' ';
-                    $filesize = $this->format_filesize(filesize($entry_path)); // Get filesize
-                    $output .= '<span class="file-size">(' . esc_html($filesize) . ')</span>'; // Add filesize to output
-                    $output .= '</div>';
-                    $pdfInfo = $this->getPDFInfo($entry_path);
-                    foreach ($pdfInfo as $key => $value) {
-                        if (!empty($value)) {
-                            $value = strtotime($value) ? date_i18n(get_option('date_format'), strtotime($value)) : $value;
-                            $output .= '<div class="pdf-info">' . esc_html($this->titleize_keys($key)) . ': <b>' . esc_html($value) . '</b></div>';
-                        }
-                    }
-                    $output .= '</div>';
+                    $breadcrumbs .= ' / ' . esc_html($title);
                 }
             }
-            $output .= '</div><br style="clear:all;" />';
-        } else {
-            $output .= '<div class="error">' . __('Directory not found.', 'directory-page-mapper') . '</div>';
         }
-        $output .= '</div>';
 
-        return $output;
+        $breadcrumbs .= '</div>';
+        return $breadcrumbs;
     }
-
 
     // Utilities for PDF metadata extraction
     private function getPDFInfo($filename) {
