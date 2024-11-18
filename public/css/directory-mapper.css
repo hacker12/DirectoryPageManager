@@ -1,54 +1,47 @@
-/* custom CSS */
+/* Custom CSS for Directory Page Mapper */
 
 .breadcrumbs {
-    padding:10px;
+    padding: 10px;
 }
 
 .file-entries {
-    /* background-color:#f2f2f2; */
     background-color: var(--wp--preset--color--base);
     flex-wrap: wrap;
-    display:flex; 
+    display: flex;
     width: 100%;
 }
 
 .file-entry {
-    margin: 20px; 
-    padding: 10px; 
+    margin: 20px;
+    padding: 10px;
     border: solid 1px var(--wp--preset--color--base-2);
-    background-color:var(--wp--preset--color--white);
-    font-size:1.2em;
-    text-align:center;
-    padding:3em;
+    background-color: var(--wp--preset--color--white);
+    font-size: 1.2em;
+    text-align: center;
+    padding: 3em;
 }
 
-.file-icon {
-    text-align:center;
+.file-icon,
+.directory-icon {
+    text-align: center;
 }
 
-.file-icon i {
-    font-size:3em;
-    /* border: solid 2px #25d366; */
+.file-icon i,
+.directory-icon i {
+    font-size: 3em;
     border: solid 2px var(--wp--preset--color--base);
-    border-radius:50%; 
-    padding:20px;
-    /* background-color:#f2f2f2; */
+    border-radius: 50%;
+    padding: 20px;
     background-color: var(--wp--preset--color--base);
 }
 
 .directory-icon i {
-    font-size:3em;
-    /* border: solid 2px #25d366; */
-    border: solid 2px var(--wp--preset--color--accent-3);
-    border-radius:50%; 
-    padding:20px;
-    /* background-color:#f2f2f2; */
-    background-color: var(--wp--preset--color--base);
+    border-color: var(--wp--preset--color--accent-3);
 }
 
 .file-name {
-    font-size:small;
-    text-align:center;
+    font-size: small;
+    text-align: center;
 }
 
 .file-size {
@@ -56,5 +49,5 @@
 }
 
 .pdf-info {
-    font-size:x-small;
+    font-size: x-small;
 }
