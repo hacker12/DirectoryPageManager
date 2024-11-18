@@ -2,7 +2,7 @@
 /*
 Plugin Name: Directory Page Mapper
 Description: Manage documentation organized in directories and create hierarchical WordPress pages accordingly.
-Version: 2.2
+Version: 2.3
 Author: Morgan ATTIAS
 Text Domain: directory-page-mapper
 */
@@ -17,8 +17,9 @@ class DirectoryPageManager {
         register_deactivation_hook(__FILE__, [$this, 'deactivate']);
         add_action('admin_menu', [$this, 'addAdminMenu']);
         add_action('admin_init', [$this, 'registerSettings']);
-        add_action('wp_enqueue_scripts', [$this, 'enqueueScripts']);
-        add_shortcode('directory_listing', [$this, 'directoryListingShortcode']);
+        // Removed shortcode and script enqueue actions
+        // add_action('wp_enqueue_scripts', [$this, 'enqueueScripts']);
+        // add_shortcode('directory_listing', [$this, 'directoryListingShortcode']);
     }
 
     public function activate() {
@@ -43,7 +44,7 @@ class DirectoryPageManager {
         add_menu_page(
             __('Directory Page Mapper', 'directory-page-mapper'),
             __('Directory Mapper', 'directory-page-mapper'),
-            'manage_options', // Restrict access to administrators
+            'manage_options',
             'directory-mapper',
             [$this, 'settingsPage'],
             'dashicons-media-text'
@@ -157,132 +158,103 @@ class DirectoryPageManager {
         $this->create_pages_recursive($root_directory, $parent_id, $skip_empty);
     }
 
-    // Recursive function to create pages
+    // Updated create_pages_recursive function
     private function create_pages_recursive($dir_path, $parent_id, $skip_empty) {
-        $directories = array_filter(glob($dir_path . '/*'), 'is_dir');
+        $entries = scandir($dir_path);
+        $directories = [];
+        $files = [];
+
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $full_path = $dir_path . DIRECTORY_SEPARATOR . $entry;
+
+            if (is_dir($full_path)) {
+                $directories[] = $full_path;
+            } elseif (is_file($full_path)) {
+                $files[] = $full_path;
+            }
+        }
+
         $exclusions = $this->getExclusions();
+
+        // Process current directory
+        $dir_name = basename($dir_path);
+        $page_title = $this->titleize_directory($dir_name);
+
+        // Check if directory is in exclusion list
+        $exclude_dir = in_array($dir_name, $exclusions['directories']);
+
+        // Check if the regex exclusion matches the directory name
+        if (isset($exclusions['regex'])) {
+            foreach ($exclusions['regex'] as $regex) {
+                if (@preg_match($regex, $dir_name)) {
+                    $exclude_dir = true;
+                    break;
+                }
+            }
+        }
+
+        // Skip directory if it's in the exclusion list
+        if ($exclude_dir) {
+            return;
+        }
+
+        // Check if directory is empty
+        $is_empty = empty($directories) && empty($files);
+
+        // Check if page already exists
+        $existing_page_id = $this->get_page_by_directory_name($page_title, $parent_id);
+
+        // Delete Page if directory is empty and setting is enabled
+        if ($skip_empty && $is_empty && $existing_page_id !== false) {
+            wp_delete_post($existing_page_id, true);
+            return;
+        }
+
+        // Skip directory if it's empty and setting is enabled
+        if ($skip_empty && $is_empty) {
+            return;
+        }
+
+        // Generate static content for the page
+        $page_content = $this->generate_static_content($dir_path);
+
+        // Create new page if not exists
+        if (!$existing_page_id) {
+            $page_id = wp_insert_post([
+                'post_title'   => $page_title,
+                'post_content' => $page_content,
+                'post_type'    => 'page',
+                'post_status'  => 'publish',
+                'post_parent'  => $parent_id,
+                'meta_input'   => ['directory_path' => $dir_path],
+            ]);
+            if (is_wp_error($page_id)) {
+                error_log('Error creating page for directory: ' . $dir_name);
+                return;
+            }
+        } else {
+            // Update existing page content
+            wp_update_post([
+                'ID'           => $existing_page_id,
+                'post_content' => $page_content,
+            ]);
+            $page_id = $existing_page_id;
+        }
+
+        // Recursive call to create pages for subdirectories
         foreach ($directories as $directory) {
-            $dir_name = basename($directory);
-            $page_title = $this->titleize_directory($dir_name);
-
-            // Check if directory is in exclusion list
-            $exclude_dir = in_array($dir_name, $exclusions['directories']);
-
-            // Check if the regex exclusion matches the directory name
-            if (isset($exclusions['regex'])) {
-                foreach ($exclusions['regex'] as $regex) {
-                    if (@preg_match($regex, $dir_name)) {
-                        $exclude_dir = true;
-                        break;
-                    }
-                }
-            }
-
-            // Skip directory if it's in the exclusion list
-            if ($exclude_dir) {
-                continue;
-            }
-
-            // Check if directory is empty
-            $is_empty = (count(glob("$directory/*")) === 0);
-
-            // Check if page already exists
-            $existing_page_id = $this->get_page_by_directory_name($page_title, $parent_id);
-
-            // Delete Page if directory is empty and setting is enabled
-            if ($skip_empty && $is_empty && $existing_page_id !== false) {
-                wp_delete_post($existing_page_id, true);
-                continue;
-            }
-
-            // Skip directory if it's empty and setting is enabled
-            if ($skip_empty && $is_empty) {
-                continue;
-            }
-
-            // Create new page if not exists
-            if (!$existing_page_id) {
-                $page_id = wp_insert_post([
-                    'post_title'   => $page_title,
-                    'post_content' => '[directory_listing path="' . esc_attr($directory) . '"]', // Shortcode to display directory contents
-                    'post_type'    => 'page',
-                    'post_status'  => 'publish',
-                    'post_parent'  => $parent_id,
-                    'meta_input'   => ['directory_path' => $directory],
-                ]);
-                if (is_wp_error($page_id)) {
-                    error_log('Error creating page for directory: ' . $dir_name);
-                    continue;
-                }
-            } else {
-                $page_id = $existing_page_id; // Use existing page ID
-            }
-
-            // Recursive call to create pages for subdirectories
             $this->create_pages_recursive($directory, $page_id, $skip_empty);
         }
     }
 
-    // Function to delete the pages created by the plugin
-    public function deleteDocumentationPages() {
-        if (!current_user_can('delete_pages')) {
-            wp_die(__('You do not have sufficient permissions to delete pages.', 'directory-page-mapper'));
-        }
-        $root_directory = get_option('directory_mapper_root_directory');
-        if (empty($root_directory) || !is_dir($root_directory)) {
-            error_log('Invalid root directory path for pages: ' . $root_directory);
-            return;
-        }
-        $root_directory = realpath($root_directory);
-        $this->delete_pages_recursive($root_directory);
-    }
-
-    private function delete_pages_recursive($dir_path) {
-        $directories = array_filter(glob($dir_path . '/*'), 'is_dir');
-        foreach ($directories as $directory) {
-            $dir_name = basename($directory);
-            $page_title = $this->titleize_directory($dir_name);
-
-            // Check if page exists
-            $existing_page_id = $this->get_page_by_directory_name($page_title);
-
-            if ($existing_page_id !== false) {
-                wp_delete_post($existing_page_id, true);
-            }
-
-            // Recursive call to delete pages for subdirectories
-            $this->delete_pages_recursive($directory);
-        }
-    }
-
-    // Function to check if a page with a given title and parent ID already exists
-    private function get_page_by_directory_name($page_title, $parent_id = null) {
-        $args = [
-            'post_type'   => 'page',
-            'post_status' => 'publish',
-            'title'       => $page_title,
-            'numberposts' => 1,
-        ];
-
-        if ($parent_id !== null) {
-            $args['post_parent'] = $parent_id;
-        }
-        $pages = get_posts($args);
-        return $pages ? $pages[0]->ID : false;
-    }
-
-    public function enqueueScripts() {
-        // Enqueue necessary scripts and styles
-        $fontAwesomeUrl = get_option('directory_mapper_font_awesome_url', 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css');
-        wp_enqueue_style('font-awesome', esc_url($fontAwesomeUrl));
-
-        // Enqueue custom CSS if exists
-        $customCssUrl = plugin_dir_url(__FILE__) . 'public/css/directory-mapper.css';
-        wp_enqueue_style('directory-mapper-custom-css', esc_url($customCssUrl));
-    }
-
-    public function directoryListingShortcode($atts) {
-        $this->enqueueScripts(); // Ensure Font Awesome is enqueued
+    // Generate static content for the page
+    private function generate_static_content($path) {
+        // Enqueue necessary scripts and styles for the content
+        $this->enqueueScripts();
 
         $custom_icons_json = stripslashes(get_option('directory_mapper_custom_folder_icons', '{}')); // Default to empty JSON object
         $custom_icons = json_decode($custom_icons_json, true);
@@ -292,22 +264,7 @@ class DirectoryPageManager {
         }
 
         $output = '<div class="directory-listing">';
-        $atts = shortcode_atts(['path' => ''], $atts);
-        $path = $atts['path'];
         $root_directory = get_option('directory_mapper_root_directory');
-
-        // Validate that root directory is set
-        if (empty($root_directory) || !is_dir($root_directory)) {
-            return '<div class="error">' . __('Invalid root directory path.', 'directory-page-mapper') . '</div>';
-        }
-
-        $path = realpath($path);
-        $root_directory = realpath($root_directory);
-
-        // Validate that the path is within the root directory
-        if (strpos($path, $root_directory) !== 0) {
-            return '<div class="error">' . __('Invalid directory path.', 'directory-page-mapper') . '</div>';
-        }
 
         // If breadcrumbs are not disabled, generate breadcrumb links
         if (get_option('directory_mapper_disable_breadcrumbs') !== '1') {
@@ -322,7 +279,7 @@ class DirectoryPageManager {
 
             $output .= "<div class='file-entries'>";
             foreach ($entries as $entry) {
-                $entry_path = $path . '/' . $entry;
+                $entry_path = $path . DIRECTORY_SEPARATOR . $entry;
                 // Skip the entry if it's in the exclusion list
                 if (in_array($entry, $exclusions['files'])) {
                     continue;
@@ -343,11 +300,7 @@ class DirectoryPageManager {
 
                 if ($is_dir) {
                     $icon_class = isset($custom_icons[$entry]) ? $custom_icons[$entry] : 'fas fa-folder';
-                } else {
-                    $icon_class = $this->get_file_icon_class($file_ext);
-                }
 
-                if ($is_dir) {
                     // Skip directory if it's in the exclusion list
                     if (in_array($entry, $exclusions['directories'])) {
                         continue;
@@ -361,7 +314,7 @@ class DirectoryPageManager {
                         }
                     }
 
-                    // Link to the page representing the directory
+                    // Generate link to the page representing the directory
                     $page_link = $this->get_page_link_by_path($entry, $path);
 
                     // If skip empty is enabled and page_link is false, skip the directory
@@ -374,10 +327,12 @@ class DirectoryPageManager {
                     $output .= $page_link ? '<a href="' . esc_url($page_link) . '">' . esc_html($entry) . '</a>' : esc_html($entry);
                     $output .= '</div>';
                 } else {
+                    $icon_class = $this->get_file_icon_class($file_ext);
+
                     // Link to the document
                     $output .= '<div class="file-entry">';
                     $output .= '<div class="file-icon"><i class="' . esc_attr($icon_class) . ' fa-fw"></i></div>';
-                    $file_url = str_replace(WP_CONTENT_DIR, WP_CONTENT_URL, $entry_path);
+                    $file_url = str_replace(ABSPATH, site_url('/'), $entry_path);
                     $output .= '<a href="' . esc_url($file_url) . '" class="file-download">' . esc_html($title) . '</a>';
                     $output .= '<div class="file-name">' . esc_html($entry) . ' ';
                     $filesize = $this->format_filesize(filesize($entry_path)); // Get filesize
@@ -398,7 +353,120 @@ class DirectoryPageManager {
             $output .= '<div class="error">' . __('Directory not found.', 'directory-page-mapper') . '</div>';
         }
         $output .= '</div>';
+
         return $output;
+    }
+
+    // Enqueue scripts and styles
+    public function enqueueScripts() {
+        // Enqueue necessary scripts and styles
+        $fontAwesomeUrl = get_option('directory_mapper_font_awesome_url', 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css');
+        wp_enqueue_style('font-awesome', esc_url($fontAwesomeUrl));
+
+        // Enqueue custom CSS if exists
+        $customCssUrl = plugin_dir_url(__FILE__) . 'public/css/directory-mapper.css';
+        wp_enqueue_style('directory-mapper-custom-css', esc_url($customCssUrl));
+    }
+
+    // Function to delete the pages created by the plugin
+    public function deleteDocumentationPages() {
+        if (!current_user_can('delete_pages')) {
+            wp_die(__('You do not have sufficient permissions to delete pages.', 'directory-page-mapper'));
+        }
+        $root_directory = get_option('directory_mapper_root_directory');
+        if (empty($root_directory) || !is_dir($root_directory)) {
+            error_log('Invalid root directory path for pages: ' . $root_directory);
+            return;
+        }
+        $root_directory = realpath($root_directory);
+        $this->delete_pages_recursive($root_directory);
+    }
+
+    private function delete_pages_recursive($dir_path) {
+        $entries = scandir($dir_path);
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $full_path = $dir_path . DIRECTORY_SEPARATOR . $entry;
+
+            if (is_dir($full_path)) {
+                $dir_name = basename($full_path);
+                $page_title = $this->titleize_directory($dir_name);
+
+                // Check if page exists
+                $existing_page_id = $this->get_page_by_directory_name($page_title);
+
+                if ($existing_page_id !== false) {
+                    wp_delete_post($existing_page_id, true);
+                }
+
+                // Recursive call to delete pages for subdirectories
+                $this->delete_pages_recursive($full_path);
+            }
+        }
+    }
+
+    // Function to check if a page with a given title and parent ID already exists
+    private function get_page_by_directory_name($page_title, $parent_id = null) {
+        $args = [
+            'post_type'   => 'page',
+            'post_status' => 'publish',
+            'title'       => $page_title,
+            'numberposts' => 1,
+        ];
+
+        if ($parent_id !== null) {
+            $args['post_parent'] = $parent_id;
+        }
+        $pages = get_posts($args);
+        return $pages ? $pages[0]->ID : false;
+    }
+
+    // Utility function to get page link by path
+    private function get_page_link_by_path($title, $current_path = '') {
+        // Get the page ID by directory name and parent
+        $parent_id = null;
+        if ($current_path) {
+            $parent_dir = dirname($current_path);
+            $parent_title = $this->titleize_directory(basename($parent_dir));
+            $parent_id = $this->get_page_by_directory_name($parent_title);
+        }
+        $args = [
+            'post_type'   => 'page',
+            'post_status' => 'publish',
+            'title'       => $this->titleize_directory($title),
+            'numberposts' => 1,
+            'post_parent' => $parent_id,
+        ];
+        $pages = get_posts($args);
+        return $pages ? get_permalink($pages[0]->ID) : false;
+    }
+
+    // Utility function to generate breadcrumbs
+    private function generate_breadcrumbs($path) {
+        $root_path = realpath(get_option('directory_mapper_root_directory'));
+        $base_directory = str_replace($root_path, '', realpath($path));
+        $breadcrumbs = '<div class="breadcrumbs">';
+        $directories = explode(DIRECTORY_SEPARATOR, trim($base_directory, DIRECTORY_SEPARATOR));
+        $current_path = $root_path;
+
+        $breadcrumbs .= '<a href="' . esc_url(get_permalink()) . '">' . __('Home', 'directory-page-mapper') . '</a>';
+
+        foreach ($directories as $directory) {
+            $current_path .= DIRECTORY_SEPARATOR . $directory;
+            $title = $this->titleize_directory($directory);
+            $page_link = $this->get_page_link_by_path($title, $current_path);
+            if ($page_link) {
+                $breadcrumbs .= ' / <a href="' . esc_url($page_link) . '">' . esc_html($title) . '</a>';
+            } else {
+                $breadcrumbs .= ' / ' . esc_html($title);
+            }
+        }
+
+        $breadcrumbs .= '</div>';
+        return $breadcrumbs;
     }
 
     // Utilities for PDF metadata extraction
@@ -461,42 +529,6 @@ class DirectoryPageManager {
             // Add more file types as needed
         ];
         return isset($icons[$extension]) ? 'fas ' . $icons[$extension] : 'fas fa-file'; // Default icon if type not recognized
-    }
-
-    private function generate_breadcrumbs($path) {
-        $root_path = realpath(get_option('directory_mapper_root_directory'));
-        $base_directory = str_replace($root_path, '', realpath($path));
-        $breadcrumbs = '<div class="breadcrumbs">';
-        $directories = explode(DIRECTORY_SEPARATOR, trim($base_directory, DIRECTORY_SEPARATOR));
-        $current_path = $root_path;
-
-        $breadcrumbs .= '<a href="' . esc_url(get_permalink()) . '">' . __('Home', 'directory-page-mapper') . '</a>';
-
-        foreach ($directories as $directory) {
-            $current_path .= DIRECTORY_SEPARATOR . $directory;
-            $title = $this->titleize_directory($directory);
-            $page_link = $this->get_page_link_by_path($title, $current_path);
-            if ($page_link) {
-                $breadcrumbs .= ' / <a href="' . esc_url($page_link) . '">' . esc_html($title) . '</a>';
-            } else {
-                $breadcrumbs .= ' / ' . esc_html($title);
-            }
-        }
-
-        $breadcrumbs .= '</div>';
-        return $breadcrumbs;
-    }
-
-    private function get_page_link_by_path($title, $path = '') {
-        // Get the page ID by directory name and path
-        $args = [
-            'post_type'   => 'page',
-            'post_status' => 'publish',
-            'title'       => $title,
-            'numberposts' => 1,
-        ];
-        $pages = get_posts($args);
-        return $pages ? get_permalink($pages[0]->ID) : false;
     }
 
     // Utility function to titleize and format keys and values
